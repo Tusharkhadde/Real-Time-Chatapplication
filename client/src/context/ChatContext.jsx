@@ -35,15 +35,14 @@ export const ChatProvider = ({ children }) => {
   // Fetch conversations
   const fetchConversations = useCallback(async () => {
     if (!isAuthenticated) return;
-    
+
     try {
       setLoading(true);
       const response = await conversationAPI.getConversations();
-      
+
       if (response.data.success) {
         setConversations(response.data.data);
-        
-        // Update unread counts
+
         const counts = {};
         response.data.data.forEach(conv => {
           counts[conv._id] = conv.unreadCount || 0;
@@ -58,14 +57,14 @@ export const ChatProvider = ({ children }) => {
     }
   }, [isAuthenticated]);
 
-  // Fetch messages for a conversation
+  // Fetch messages
   const fetchMessages = useCallback(async (conversationId, page = 1) => {
     if (!conversationId) return;
-    
+
     try {
       setMessagesLoading(true);
       const response = await messageAPI.getMessages(conversationId, { page, limit: 50 });
-      
+
       if (response.data.success) {
         if (page === 1) {
           setMessages(response.data.data);
@@ -82,7 +81,7 @@ export const ChatProvider = ({ children }) => {
     }
   }, []);
 
-  // Select a conversation
+  // Select conversation
   const selectConversation = useCallback(async (conversation) => {
     if (!conversation) {
       setActiveConversation(null);
@@ -93,15 +92,12 @@ export const ChatProvider = ({ children }) => {
     setActiveConversation(conversation);
     setMessages([]);
     setHasMoreMessages(true);
-    
+
     await fetchMessages(conversation._id);
-    
-    // Mark as read
+
     try {
       await conversationAPI.markAsRead(conversation._id);
       setUnreadCounts(prev => ({ ...prev, [conversation._id]: 0 }));
-      
-      // Emit read receipt
       emit('mark-read', { conversationId: conversation._id });
     } catch (err) {
       console.error('Mark as read error:', err);
@@ -113,20 +109,15 @@ export const ChatProvider = ({ children }) => {
     try {
       setLoading(true);
       const response = await conversationAPI.createPrivate(userId);
-      
+
       if (response.data.success) {
         const newConv = response.data.data;
-        
-        // Add to conversations if not exists
         setConversations(prev => {
           const exists = prev.find(c => c._id === newConv._id);
           if (exists) return prev;
           return [newConv, ...prev];
         });
-        
-        // Select the conversation
         await selectConversation(newConv);
-        
         return newConv;
       }
     } catch (err) {
@@ -145,7 +136,7 @@ export const ChatProvider = ({ children }) => {
         name,
         participants: participantIds
       });
-      
+
       if (response.data.success) {
         const newConv = response.data.data;
         setConversations(prev => [newConv, ...prev]);
@@ -160,47 +151,44 @@ export const ChatProvider = ({ children }) => {
     }
   }, [selectConversation]);
 
-  // Send message
- // Update the sendMessage function in ChatContext to support replyTo
+  // Send message (with reply support)
+  const sendMessage = useCallback(async (content, type = 'text', attachments = null, replyToId = null) => {
+    if (!activeConversation) return;
 
-const sendMessage = useCallback(async (content, type = 'text', attachments = null, replyToId = null) => {
-  if (!activeConversation) return;
-  
-  try {
-    const messageData = {
-      conversationId: activeConversation._id,
-      content,
-      type
-    };
-    
-    if (attachments && attachments.length > 0) {
-      messageData.attachments = attachments;
-    }
-    
-    if (replyToId) {
-      messageData.replyTo = replyToId;
-    }
+    try {
+      const messageData = {
+        conversationId: activeConversation._id,
+        content,
+        type
+      };
 
-    const response = await messageAPI.sendMessage(messageData);
-    
-    if (response.data.success) {
-      playSound?.('send');
-      return response.data.data;
+      if (attachments?.length) {
+        messageData.attachments = attachments;
+      }
+      if (replyToId) {
+        messageData.replyTo = replyToId;
+      }
+
+      const response = await messageAPI.sendMessage(messageData);
+
+      if (response.data.success) {
+        playSound?.('send');
+        return response.data.data;
+      }
+    } catch (err) {
+      console.error('Send message error:', err);
+      throw err;
     }
-  } catch (err) {
-    console.error('Send message error:', err);
-    throw err;
-  }
-}, [activeConversation, playSound]);
+  }, [activeConversation, playSound]);
 
   // Edit message
   const editMessage = useCallback(async (messageId, content) => {
     try {
       const response = await messageAPI.editMessage(messageId, content);
-      
+
       if (response.data.success) {
-        setMessages(prev => prev.map(msg => 
-          msg._id === messageId 
+        setMessages(prev => prev.map(msg =>
+          msg._id === messageId
             ? { ...msg, content, isEdited: true, editedAt: new Date() }
             : msg
         ));
@@ -216,10 +204,10 @@ const sendMessage = useCallback(async (content, type = 'text', attachments = nul
   const deleteMessage = useCallback(async (messageId) => {
     try {
       const response = await messageAPI.deleteMessage(messageId);
-      
+
       if (response.data.success) {
-        setMessages(prev => prev.map(msg => 
-          msg._id === messageId 
+        setMessages(prev => prev.map(msg =>
+          msg._id === messageId
             ? { ...msg, isDeleted: true, content: 'This message was deleted' }
             : msg
         ));
@@ -248,13 +236,79 @@ const sendMessage = useCallback(async (content, type = 'text', attachments = nul
     }
   }, []);
 
-  // Start typing
+  // Forward message
+  const forwardMessage = useCallback(async (messageId, targetConversationId) => {
+    try {
+      if (typeof messageAPI.forwardMessage !== 'function') {
+        const originalMessage = messages.find(m => m._id === messageId);
+
+        if (!originalMessage) {
+          throw new Error('Original message not found');
+        }
+
+        const messageData = {
+          conversationId: targetConversationId,
+          content: originalMessage.content,
+          type: originalMessage.type || 'text',
+          forwardedFrom: {
+            messageId: originalMessage._id,
+            senderName: originalMessage.sender?.username,
+            originalDate: originalMessage.createdAt
+          }
+        };
+
+        if (originalMessage.attachments?.length) {
+          messageData.attachments = originalMessage.attachments;
+        }
+
+        const response = await messageAPI.sendMessage(messageData);
+
+        if (response?.data?.success) {
+          playSound?.('send');
+          return response.data.data;
+        }
+      } else {
+        const response = await messageAPI.forwardMessage({
+          messageId,
+          conversationId: targetConversationId
+        });
+
+        if (response?.data?.success) {
+          playSound?.('send');
+          return response.data.data;
+        }
+      }
+    } catch (err) {
+      console.error('Forward message error:', err);
+      throw err;
+    }
+  }, [messages, playSound]);
+
+  // ✅ NEW: Scroll to message with highlight effect
+  const scrollToMessage = useCallback((messageId) => {
+    // Small delay to ensure DOM is ready (especially after closing dialogs)
+    setTimeout(() => {
+      const el = document.getElementById(`message-${messageId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        
+        // Add highlight effect
+        el.classList.add("ring-2", "ring-primary", "ring-offset-2", "bg-primary/5");
+        
+        // Remove highlight after animation
+        setTimeout(() => {
+          el.classList.remove("ring-2", "ring-primary", "ring-offset-2", "bg-primary/5");
+        }, 2000);
+      }
+    }, 100);
+  }, []);
+
+  // Typing events
   const startTyping = useCallback(() => {
     if (!activeConversation) return;
     emit('typing-start', { conversationId: activeConversation._id });
   }, [activeConversation, emit]);
 
-  // Stop typing
   const stopTyping = useCallback(() => {
     if (!activeConversation) return;
     emit('typing-stop', { conversationId: activeConversation._id });
@@ -263,7 +317,7 @@ const sendMessage = useCallback(async (content, type = 'text', attachments = nul
   // Load more messages
   const loadMoreMessages = useCallback(async () => {
     if (!activeConversation || !hasMoreMessages || messagesLoading) return;
-    
+
     const currentPage = Math.ceil(messages.length / 50) + 1;
     await fetchMessages(activeConversation._id, currentPage);
   }, [activeConversation, hasMoreMessages, messagesLoading, messages.length, fetchMessages]);
@@ -273,7 +327,7 @@ const sendMessage = useCallback(async (content, type = 'text', attachments = nul
     try {
       const params = { q: query };
       if (conversationId) params.conversationId = conversationId;
-      
+
       const response = await messageAPI.searchMessages(params);
       return response.data.data || [];
     } catch (err) {
@@ -282,118 +336,80 @@ const sendMessage = useCallback(async (content, type = 'text', attachments = nul
     }
   }, []);
 
-  // Get other participant in private chat
   const getOtherParticipant = useCallback((conversation) => {
     if (!conversation || !user) return null;
     if (conversation.type === 'group') return null;
-    
+
     const other = conversation.participants?.find(
       p => p.user?._id !== user._id
     );
     return other?.user || null;
   }, [user]);
 
-  // Socket event handlers
+  // Socket handlers
   useEffect(() => {
     if (!socket || !isConnected) return;
 
-    // New message received
     const handleNewMessage = ({ message, conversationId }) => {
-      console.log('New message received:', message);
-      
-      // Add to messages if in active conversation
       if (activeConversation?._id === conversationId) {
         setMessages(prev => {
-          // Check if message already exists
           if (prev.find(m => m._id === message._id)) return prev;
           return [...prev, message];
         });
-        
-        // Mark as read
         emit('mark-read', { conversationId, messageIds: [message._id] });
       } else {
-        // Update unread count
         setUnreadCounts(prev => ({
           ...prev,
           [conversationId]: (prev[conversationId] || 0) + 1
         }));
-        
-        // Play notification sound
         if (message.sender?._id !== user?._id) {
           playSound?.('message');
         }
       }
-      
-      // Update conversation last message
+
       setConversations(prev => {
-        const updated = prev.map(conv => {
-          if (conv._id === conversationId) {
-            return { ...conv, lastMessage: message, lastActivity: new Date() };
-          }
-          return conv;
-        });
-        // Sort by last activity
-        return updated.sort((a, b) => 
+        const updated = prev.map(conv =>
+          conv._id === conversationId
+            ? { ...conv, lastMessage: message, lastActivity: new Date() }
+            : conv
+        );
+        return updated.sort((a, b) =>
           new Date(b.lastActivity) - new Date(a.lastActivity)
         );
       });
     };
 
-    // Message updated
     const handleMessageUpdated = ({ message }) => {
-      setMessages(prev => prev.map(m => 
+      setMessages(prev => prev.map(m =>
         m._id === message._id ? message : m
       ));
     };
 
-    // Message deleted
     const handleMessageDeleted = ({ messageId }) => {
-      setMessages(prev => prev.map(m => 
-        m._id === messageId 
+      setMessages(prev => prev.map(m =>
+        m._id === messageId
           ? { ...m, isDeleted: true, content: 'This message was deleted' }
           : m
       ));
     };
 
-    // Reaction updated
     const handleMessageReaction = ({ messageId, reactions }) => {
-      setMessages(prev => prev.map(m => 
+      setMessages(prev => prev.map(m =>
         m._id === messageId ? { ...m, reactions } : m
       ));
     };
 
-    // User typing
     const handleUserTyping = ({ conversationId, userId, username, isTyping }) => {
       if (userId === user?._id) return;
-      
+
       setTypingUsers(prev => {
-        const convTyping = { ...prev[conversationId] } || {};
-        
-        if (isTyping) {
-          convTyping[userId] = username;
-        } else {
-          delete convTyping[userId];
-        }
-        
+        const convTyping = { ...(prev[conversationId] || {}) };
+        if (isTyping) convTyping[userId] = username;
+        else delete convTyping[userId];
         return { ...prev, [conversationId]: convTyping };
       });
-      
-      // Clear typing after timeout
-      if (isTyping) {
-        if (typingTimeoutRef.current[`${conversationId}-${userId}`]) {
-          clearTimeout(typingTimeoutRef.current[`${conversationId}-${userId}`]);
-        }
-        typingTimeoutRef.current[`${conversationId}-${userId}`] = setTimeout(() => {
-          setTypingUsers(prev => {
-            const convTyping = { ...prev[conversationId] };
-            delete convTyping[userId];
-            return { ...prev, [conversationId]: convTyping };
-          });
-        }, 3000);
-      }
     };
 
-    // Messages read
     const handleMessagesRead = ({ conversationId, readBy }) => {
       if (activeConversation?._id === conversationId) {
         setMessages(prev => prev.map(m => {
@@ -408,7 +424,6 @@ const sendMessage = useCallback(async (content, type = 'text', attachments = nul
       }
     };
 
-    // Subscribe to events
     on('new-message', handleNewMessage);
     on('message-updated', handleMessageUpdated);
     on('message-deleted', handleMessageDeleted);
@@ -426,15 +441,11 @@ const sendMessage = useCallback(async (content, type = 'text', attachments = nul
     };
   }, [socket, isConnected, activeConversation, user, on, off, emit, playSound]);
 
-  // Fetch conversations on mount
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchConversations();
-    }
+    if (isAuthenticated) fetchConversations();
   }, [isAuthenticated, fetchConversations]);
 
-  // Get total unread count
-  const totalUnreadCount = Object.values(unreadCounts).reduce((sum, count) => sum + count, 0);
+  const totalUnreadCount = Object.values(unreadCounts).reduce((sum, c) => sum + c, 0);
 
   const value = {
     // State
@@ -459,12 +470,14 @@ const sendMessage = useCallback(async (content, type = 'text', attachments = nul
     deleteMessage,
     addReaction,
     removeReaction,
+    forwardMessage,
     startTyping,
     stopTyping,
     loadMoreMessages,
     searchMessages,
     getOtherParticipant,
-    setError
+    setError,
+    scrollToMessage, // ✅ NEW: Exposed here
   };
 
   return (

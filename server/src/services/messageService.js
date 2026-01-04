@@ -62,7 +62,7 @@ class MessageService {
       }
     );
   }
-
+  
   async getUnreadCount(userId) {
     const conversations = await Conversation.find({
       'participants.user': userId
@@ -77,5 +77,21 @@ class MessageService {
     return totalUnread;
   }
 }
+const original = await Message.findById(messageId);
+
+const forwardedMessage = await Message.create({
+  conversationId,
+  sender: req.user,        // person forwarding
+  content: original.content,
+  attachments: original.attachments,
+
+  forwarded: true,
+  originalMessageId: original._id,
+
+  originalSender: {
+    _id: original.sender._id,
+    username: original.sender.username
+  }
+});
 
 module.exports = new MessageService();

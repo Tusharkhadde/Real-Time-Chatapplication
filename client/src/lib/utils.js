@@ -1,15 +1,6 @@
-// client/src/lib/utils.js
-import { clsx } from 'clsx'
-import { twMerge } from 'tailwind-merge'
+import { clsx } from "clsx";
+import { twMerge } from "tailwind-merge"
 
 export function cn(...inputs) {
-  return twMerge(clsx(inputs))
-}
-
-export function generateId() {
-  return Math.random().toString(36).substring(2) + Date.now().toString(36)
-}
-
-export function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
+  return twMerge(clsx(inputs));
 }

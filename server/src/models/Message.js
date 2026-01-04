@@ -51,6 +51,12 @@ const messageSchema = new mongoose.Schema({
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
     },
+     forwarded: { type: Boolean, default: false },
+  originalMessageId: { type: String, default: null },
+  originalSender: {
+    _id: String,
+    username: String
+  },
     readAt: {
       type: Date,
       default: Date.now
