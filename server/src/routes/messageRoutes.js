@@ -27,5 +27,6 @@ router.delete('/:id', deleteMessage);
 
 router.post('/:id/reactions', addReaction);
 router.delete('/:id/reactions', removeReaction);
+router.post("/:id/poll/vote", auth, messageController.votePoll);
 
 module.exports = router;

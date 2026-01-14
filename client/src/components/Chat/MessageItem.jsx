@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import VoiceMessage from "./VoiceMessage";
 import LinkPreview, { extractUrls } from "./LinkPreview";
+import PollMessage from "./PollMessage"; // ✅ PollMessage import
 
 const MessageItem = memo(
   ({ message, isOwn, showAvatar, isLastInGroup, onReply }) => {
@@ -44,6 +45,7 @@ const MessageItem = memo(
       conversations,
       forwardMessage,
       activeConversation,
+      votePoll, // ✅ poll voting from context
     } = useChat();
 
     // State
@@ -148,22 +150,25 @@ const MessageItem = memo(
       setForwardError(null);
     }, []);
 
-    const handleForwardSubmit = useCallback(async () => {
-      if (!selectedChat || !message?._id) return;
+    const handleForwardSubmit = useCallback(
+      async () => {
+        if (!selectedChat || !message?._id) return;
 
-      setIsForwarding(true);
-      setForwardError(null);
+        setIsForwarding(true);
+        setForwardError(null);
 
-      try {
-        await forwardMessage(message._id, selectedChat._id);
-        handleCloseForward();
-      } catch (err) {
-        console.error("Forward failed:", err);
-        setForwardError(err.message || "Failed to forward message");
-      } finally {
-        setIsForwarding(false);
-      }
-    }, [selectedChat, message?._id, forwardMessage, handleCloseForward]);
+        try {
+          await forwardMessage(message._id, selectedChat._id);
+          handleCloseForward();
+        } catch (err) {
+          console.error("Forward failed:", err);
+          setForwardError(err.message || "Failed to forward message");
+        } finally {
+          setIsForwarding(false);
+        }
+      },
+      [selectedChat, message?._id, forwardMessage, handleCloseForward]
+    );
 
     const handleImageClick = useCallback((url) => {
       setLightboxImage(url);
@@ -190,30 +195,33 @@ const MessageItem = memo(
     const stopPropagation = useCallback((e) => e.stopPropagation(), []);
 
     // Get chat display info for forward dialog
-    const getChatDisplayInfo = useCallback((chat) => {
-      if (chat.type === "group" || chat.isGroup) {
+    const getChatDisplayInfo = useCallback(
+      (chat) => {
+        if (chat.type === "group" || chat.isGroup) {
+          return {
+            name: chat.name || "Group",
+            subtitle: `${chat.participants?.length || 0} members`,
+            avatar: chat.avatar,
+          };
+        }
+
+        const otherParticipant = chat.participants?.find(
+          (p) => p.user?._id !== message?.sender?._id
+        )?.user;
+
         return {
-          name: chat.name || "Group",
-          subtitle: `${chat.participants?.length || 0} members`,
-          avatar: chat.avatar,
+          name: otherParticipant?.username || chat.name || "Chat",
+          subtitle: "Direct message",
+          avatar: otherParticipant?.avatar || chat.avatar,
         };
-      }
-
-      const otherParticipant = chat.participants?.find(
-        (p) => p.user?._id !== message?.sender?._id
-      )?.user;
-
-      return {
-        name: otherParticipant?.username || chat.name || "Chat",
-        subtitle: "Direct message",
-        avatar: otherParticipant?.avatar || chat.avatar,
-      };
-    }, [message?.sender?._id]);
+      },
+      [message?.sender?._id]
+    );
 
     // Render system message
     if (isSystem) {
       return (
-        <div 
+        <div
           id={`message-${message._id}`}
           className="flex items-center justify-center my-3"
         >
@@ -223,6 +231,27 @@ const MessageItem = memo(
         </div>
       );
     }
+
+    // ✅ Render poll message (STEP-4)
+    // POLL MESSAGE RENDER
+if (message.type === "poll") {
+  return (
+    <div
+      id={`message-${message._id}`}
+      className={`group flex gap-2 px-2 py-0.5 ${isOwn ? 'flex-row-reverse' : ''}`}
+    >
+      <div className="w-8 flex-shrink-0"></div>
+
+      <div className="max-w-[70%]">
+        <PollMessage
+          message={message}
+          onVote={(optionId) => votePoll(message._id, optionId)}
+        />
+      </div>
+    </div>
+  );
+}
+
 
     return (
       <>
@@ -269,16 +298,19 @@ const MessageItem = memo(
 
             {/* Forwarded indicator */}
             {message?.forwarded && (
-              <div className={`
+              <div
+                className={`
                 flex items-center gap-1 text-xs text-muted-foreground mb-1
                 ${isOwn ? "flex-row-reverse" : ""}
-              `}>
+              `}
+              >
                 <Forward className="h-3 w-3" />
                 <span>
                   Forwarded
                   {message.originalSender?.username && (
                     <span className="font-normal">
-                      {" from "}{message.originalSender.username}
+                      {" from "}
+                      {message.originalSender.username}
                     </span>
                   )}
                 </span>
@@ -371,7 +403,9 @@ const MessageItem = memo(
                         </p>
                         <p
                           className={`text-xs ${
-                            isOwn ? "text-primary-foreground/70" : "text-muted-foreground"
+                            isOwn
+                              ? "text-primary-foreground/70"
+                              : "text-muted-foreground"
                           }`}
                         >
                           {formatSize(attachment.size)}
@@ -381,7 +415,9 @@ const MessageItem = memo(
                         variant="ghost"
                         size="icon"
                         className={`h-8 w-8 flex-shrink-0 ${
-                          isOwn ? "text-primary-foreground hover:bg-primary-foreground/20" : ""
+                          isOwn
+                            ? "text-primary-foreground hover:bg-primary-foreground/20"
+                            : ""
                         }`}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -401,11 +437,20 @@ const MessageItem = memo(
               <div
                 className={`
                   relative px-4 py-2 rounded-2xl message-enter
-                  ${isOwn
-                    ? `bg-primary text-primary-foreground ${isLastInGroup ? "rounded-br-md" : ""}`
-                    : `bg-muted ${isLastInGroup ? "rounded-bl-md" : ""}`
+                  ${
+                    isOwn
+                      ? `bg-primary text-primary-foreground ${
+                          isLastInGroup ? "rounded-br-md" : ""
+                        }`
+                      : `bg-muted ${
+                          isLastInGroup ? "rounded-bl-md" : ""
+                        }`
                   }
-                  ${isDeleted ? "bg-muted/60 text-muted-foreground border border-border/40" : ""}
+                  ${
+                    isDeleted
+                      ? "bg-muted/60 text-muted-foreground border border-border/40"
+                      : ""
+                  }
                 `}
               >
                 {isDeleted ? (
@@ -481,7 +526,9 @@ const MessageItem = memo(
           {/* Action buttons */}
           <div
             className={`
-              flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity
+              flex items-center gap-1 ${
+                showActions ? "opacity-100" : "opacity-0"
+              } group-hover:opacity-100 transition-opacity
               ${isOwn ? "order-first" : ""}
             `}
           >

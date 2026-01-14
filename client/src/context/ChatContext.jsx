@@ -151,22 +151,36 @@ export const ChatProvider = ({ children }) => {
     }
   }, [selectConversation]);
 
-  // Send message (with reply support)
-  const sendMessage = useCallback(async (content, type = 'text', attachments = null, replyToId = null) => {
+  // ✅ FIXED: Send message (supports both regular messages and polls)
+  const sendMessage = useCallback(async (contentOrPayload, type = 'text', attachments = null, replyToId = null) => {
     if (!activeConversation) return;
 
     try {
-      const messageData = {
-        conversationId: activeConversation._id,
-        content,
-        type
-      };
+      let messageData;
 
-      if (attachments?.length) {
-        messageData.attachments = attachments;
-      }
-      if (replyToId) {
-        messageData.replyTo = replyToId;
+      // Check if first argument is a payload object (for polls) or content string
+      if (typeof contentOrPayload === 'object' && contentOrPayload !== null && contentOrPayload.type) {
+        // It's a full message payload (poll, etc.)
+        messageData = {
+          conversationId: activeConversation._id,
+          ...contentOrPayload
+        };
+        
+        console.log('Sending message payload:', messageData);
+      } else {
+        // It's a regular message with separate parameters
+        messageData = {
+          conversationId: activeConversation._id,
+          content: contentOrPayload,
+          type
+        };
+
+        if (attachments?.length) {
+          messageData.attachments = attachments;
+        }
+        if (replyToId) {
+          messageData.replyTo = replyToId;
+        }
       }
 
       const response = await messageAPI.sendMessage(messageData);
@@ -284,18 +298,53 @@ export const ChatProvider = ({ children }) => {
     }
   }, [messages, playSound]);
 
-  // ✅ NEW: Scroll to message with highlight effect
+  // ✅ NEW: Vote on poll
+  const votePoll = useCallback(async (messageId, optionId) => {
+    try {
+      const response = await messageAPI.votePoll(messageId, optionId);
+
+      if (response.data.success) {
+        setMessages(prev =>
+          prev.map(m =>
+            m._id === messageId ? { ...m, poll: response.data.data } : m
+          )
+        );
+        return response.data.data;
+      }
+    } catch (err) {
+      console.error('Vote poll error:', err);
+      throw err;
+    }
+  }, []);
+
+  // ✅ NEW: Remove vote from poll
+  const removeVote = useCallback(async (messageId) => {
+    try {
+      const response = await messageAPI.removeVote(messageId);
+
+      if (response.data.success) {
+        setMessages(prev =>
+          prev.map(m =>
+            m._id === messageId ? { ...m, poll: response.data.data } : m
+          )
+        );
+        return response.data.data;
+      }
+    } catch (err) {
+      console.error('Remove vote error:', err);
+      throw err;
+    }
+  }, []);
+
+  // Scroll to message with highlight effect
   const scrollToMessage = useCallback((messageId) => {
-    // Small delay to ensure DOM is ready (especially after closing dialogs)
     setTimeout(() => {
       const el = document.getElementById(`message-${messageId}`);
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
         
-        // Add highlight effect
         el.classList.add("ring-2", "ring-primary", "ring-offset-2", "bg-primary/5");
         
-        // Remove highlight after animation
         setTimeout(() => {
           el.classList.remove("ring-2", "ring-primary", "ring-offset-2", "bg-primary/5");
         }, 2000);
@@ -424,12 +473,22 @@ export const ChatProvider = ({ children }) => {
       }
     };
 
+    // ✅ NEW: Handle poll vote updates via socket
+    const handlePollVote = ({ messageId, poll, conversationId }) => {
+      if (activeConversation?._id === conversationId) {
+        setMessages(prev => prev.map(m =>
+          m._id === messageId ? { ...m, poll } : m
+        ));
+      }
+    };
+
     on('new-message', handleNewMessage);
     on('message-updated', handleMessageUpdated);
     on('message-deleted', handleMessageDeleted);
     on('message-reaction', handleMessageReaction);
     on('user-typing', handleUserTyping);
     on('messages-read', handleMessagesRead);
+    on('poll-vote', handlePollVote); // ✅ NEW
 
     return () => {
       off('new-message', handleNewMessage);
@@ -438,6 +497,7 @@ export const ChatProvider = ({ children }) => {
       off('message-reaction', handleMessageReaction);
       off('user-typing', handleUserTyping);
       off('messages-read', handleMessagesRead);
+      off('poll-vote', handlePollVote); // ✅ NEW
     };
   }, [socket, isConnected, activeConversation, user, on, off, emit, playSound]);
 
@@ -477,7 +537,9 @@ export const ChatProvider = ({ children }) => {
     searchMessages,
     getOtherParticipant,
     setError,
-    scrollToMessage, // ✅ NEW: Exposed here
+    scrollToMessage,
+    votePoll,      // ✅ NEW
+    removeVote,    // ✅ NEW
   };
 
   return (
@@ -487,4 +549,4 @@ export const ChatProvider = ({ children }) => {
   );
 };
 
-export default ChatContext;
+export default ChatContext;    

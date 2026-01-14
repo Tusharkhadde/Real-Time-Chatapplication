@@ -179,8 +179,21 @@ const messageSchema = new mongoose.Schema({
   content: { type: String, maxlength: 5000 },
   type: { 
     type: String, 
-    enum: ['text', 'image', 'file', 'audio', 'video', 'system'], 
+    enum: ['text', 'image', 'file', 'audio', 'video', 'system', 'poll'], 
     default: 'text' 
+  },
+  // Poll data (optional)
+  poll: {
+    question: { type: String, maxlength: 500 },
+    options: [{
+      id: Number,
+      text: { type: String, maxlength: 200 },
+      votes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
+    }],
+    allowMultiple: { type: Boolean, default: false },
+    isAnonymous: { type: Boolean, default: false },
+    expiresAt: { type: Date, default: null },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },
   attachments: [{ 
     filename: String, 
@@ -1110,13 +1123,18 @@ app.get('/api/messages/:conversationId', protect, async (req, res) => {
 
 app.post('/api/messages', protect, async (req, res) => {
   try {
-    const { conversationId, content, type = 'text', replyTo, attachments } = req.body;
+    const { conversationId, content, type = 'text', replyTo, attachments, poll } = req.body;
 
     if (!conversationId) {
       return res.status(400).json({ success: false, message: 'Conversation ID is required' });
     }
 
-    if (!content && (!attachments || attachments.length === 0)) {
+    // If this is a poll, ensure it has content/options
+    if (poll) {
+      if (!poll.question || !poll.options || poll.options.length < 2) {
+        return res.status(400).json({ success: false, message: 'Poll must have a question and at least 2 options' });
+      }
+    } else if (!content && (!attachments || attachments.length === 0)) {
       return res.status(400).json({ success: false, message: 'Message content or attachments required' });
     }
 
@@ -1129,16 +1147,30 @@ app.post('/api/messages', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
+    // Determine message type
+    const msgType = poll ? 'poll' : type;
+
     const messageData = {
       conversation: conversationId,
       sender: req.user._id,
-      content: content || '',
-      type,
+      content: content || (poll ? poll.question : ''),
+      type: msgType,
       readBy: [{ user: req.user._id, readAt: new Date() }]
     };
 
     if (replyTo) messageData.replyTo = replyTo;
     if (attachments) messageData.attachments = attachments;
+
+    if (poll) {
+      messageData.poll = {
+        question: poll.question,
+        options: poll.options.map((opt, idx) => ({ id: opt.id || idx + 1, text: opt.text, votes: [] })),
+        allowMultiple: poll.allowMultiple || false,
+        isAnonymous: poll.isAnonymous || false,
+        expiresAt: poll.expiresAt || null,
+        createdBy: req.user._id
+      };
+    }
 
     const message = await Message.create(messageData);
 
@@ -1165,6 +1197,9 @@ app.post('/api/messages', protect, async (req, res) => {
     res.status(201).json({ success: true, data: message });
   } catch (error) {
     console.error('Send message error:', error);
+    if (error.name === 'ValidationError' || (error.errors && Object.keys(error.errors).length)) {
+      return res.status(400).json({ success: false, message: 'Validation failed', errors: error.errors || error.message });
+    }
     res.status(500).json({ success: false, message: 'Failed to send message' });
   }
 });
@@ -1658,7 +1693,6 @@ app.use((req, res) => {
 
 // ==================== START SERVER ====================
 console.log('🔄 Connecting to MongoDB...');
-console.log(`   URI: ${MONGODB_URI}`);
 
 mongoose.connect(MONGODB_URI)
   .then(() => {

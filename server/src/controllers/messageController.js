@@ -4,9 +4,9 @@ const Attachment = require('../models/Attachment');
 const { getIO } = require('../config/socket');
 const { getUserSockets } = require('../socket/utils/userSocketMap');
 
-// @desc    Get messages for a conversation
-// @route   GET /api/messages/:conversationId
-// @access  Private
+// @desc Get messages for a conversation
+// @route GET /api/messages/:conversationId
+// @access Private
 exports.getMessages = async (req, res) => {
   try {
     const { conversationId } = req.params;
@@ -54,13 +54,34 @@ exports.getMessages = async (req, res) => {
   }
 };
 
-// @desc    Send message
-// @route   POST /api/messages
-// @access  Private
+// @desc Send message
+// @route POST /api/messages
+// @access Private
 exports.sendMessage = async (req, res) => {
   try {
-    const { conversationId, content, type = 'text', replyTo, attachmentIds } = req.body;
+    const { 
+      conversationId, 
+      content, 
+      type = 'text', 
+      replyTo, 
+      attachmentIds,
+      attachments,
+      poll,
+      forwardedFrom
+    } = req.body;
 
+    // Determine message type; if poll payload supplied, treat as poll
+    let msgType = type || 'text';
+    if (poll) msgType = 'poll';
+    // Debug logging
+    console.log('=== SEND MESSAGE REQUEST ===');
+    console.log('Type:', type);
+    console.log('Content:', content);
+    console.log('Poll:', poll);
+    console.log('ConversationId:', conversationId);
+    console.log('============================');
+
+    // Validate conversation
     const conversation = await Conversation.findOne({
       _id: conversationId,
       'participants.user': req.user._id
@@ -73,35 +94,97 @@ exports.sendMessage = async (req, res) => {
       });
     }
 
+    // Initialize message data FIRST
     const messageData = {
       conversation: conversationId,
       sender: req.user._id,
-      content,
-      type,
+      type: msgType,
       readBy: [{ user: req.user._id, readAt: new Date() }],
       deliveredTo: [{ user: req.user._id, deliveredAt: new Date() }]
     };
 
+    // Handle poll type
+    if (type === 'poll') {
+      if (!poll || !poll.question || !poll.options || poll.options.length < 2) {
+        return res.status(400).json({
+          success: false,
+          message: 'Poll must have a question and at least 2 options'
+        });
+      }
+
+      messageData.content = poll.question;
+      messageData.poll = {
+        question: poll.question,
+        options: poll.options.map((opt, idx) => ({
+          id: opt.id || idx + 1,
+          text: opt.text,
+          votes: []
+        })),
+        allowMultiple: poll.allowMultiple || false,
+        isAnonymous: poll.isAnonymous || false,
+        expiresAt: poll.expiresAt || null
+      };
+
+      console.log('Poll data created:', JSON.stringify(messageData.poll, null, 2));
+    } else {
+      // For non-poll messages, content is required
+      if (!content && (!attachmentIds || attachmentIds.length === 0) && (!attachments || attachments.length === 0)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Message content is required'
+        });
+      }
+      messageData.content = content || '';
+    }
+
+    // Handle reply
     if (replyTo) {
       messageData.replyTo = replyTo;
     }
 
-    if (attachmentIds && attachmentIds.length > 0) {
-      messageData.attachments = attachmentIds;
+    // Handle attachments (support both attachmentIds and attachments)
+    const attIds = attachmentIds || attachments;
+    if (attIds && attIds.length > 0) {
+      messageData.attachments = attIds;
+    }
+
+    // Handle forwarded message
+    if (forwardedFrom) {
+      messageData.forwarded = true;
+      messageData.forwardedFrom = {
+        messageId: forwardedFrom.messageId,
+        senderName: forwardedFrom.senderName,
+        originalDate: forwardedFrom.originalDate
+      };
+    }
+
+    console.log('Final messageData:', JSON.stringify(messageData, null, 2));
+
+    // Create the message
+    const message = await Message.create(messageData);
+
+    // Update attachment references after message is created
+    if (attIds && attIds.length > 0) {
       await Attachment.updateMany(
-        { _id: { $in: attachmentIds } },
-        { message: messageData._id }
+        { _id: { $in: attIds } },
+        { message: message._id }
       );
     }
 
-    const message = await Message.create(messageData);
-
+    // Populate message data
     await message.populate([
       { path: 'sender', select: 'username avatar' },
       { path: 'replyTo', select: 'content sender', populate: { path: 'sender', select: 'username' } },
       { path: 'attachments' }
     ]);
 
+    // Update conversation's last message
+    await Conversation.findByIdAndUpdate(conversationId, {
+      lastMessage: message._id,
+      lastActivity: new Date()
+    });
+
+    // Emit to all participants
     const io = getIO();
     conversation.participants.forEach(participant => {
       const userId = participant.user.toString();
@@ -118,18 +201,286 @@ exports.sendMessage = async (req, res) => {
       success: true,
       data: message
     });
+
   } catch (error) {
-    console.error('Send message error:', error);
+    console.error('=== SEND MESSAGE ERROR ===');
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
+    if (error.errors) {
+      console.error('Validation errors:', JSON.stringify(error.errors, null, 2));
+    }
+    console.error('==========================');
+
+    // If validation error, return 400 with details
+    if (error.name === 'ValidationError' || (error.errors && Object.keys(error.errors).length)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: error.errors || error.message
+      });
+    }
+
     res.status(500).json({
       success: false,
-      message: 'Failed to send message'
+      message: 'Failed to send message',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// @desc    Edit message
-// @route   PUT /api/messages/:id
-// @access  Private
+// @desc Forward message
+// @route POST /api/messages/forward
+// @access Private
+exports.forwardMessage = async (req, res) => {
+  try {
+    const { messageId, conversationId } = req.body;
+
+    const originalMessage = await Message.findById(messageId)
+      .populate('sender', 'username avatar')
+      .populate('attachments');
+
+    if (!originalMessage) {
+      return res.status(404).json({
+        success: false,
+        message: 'Original message not found'
+      });
+    }
+
+    const targetConversation = await Conversation.findOne({
+      _id: conversationId,
+      'participants.user': req.user._id
+    });
+
+    if (!targetConversation) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied to target conversation'
+      });
+    }
+
+    const forwardedMessageData = {
+      conversation: conversationId,
+      sender: req.user._id,
+      content: originalMessage.content,
+      type: originalMessage.type,
+      forwarded: true,
+      forwardedFrom: {
+        messageId: originalMessage._id,
+        senderName: originalMessage.sender?.username,
+        originalDate: originalMessage.createdAt
+      },
+      readBy: [{ user: req.user._id, readAt: new Date() }],
+      deliveredTo: [{ user: req.user._id, deliveredAt: new Date() }]
+    };
+
+    if (originalMessage.attachments?.length > 0) {
+      forwardedMessageData.attachments = originalMessage.attachments.map(a => a._id);
+    }
+
+    if (originalMessage.type === 'poll' && originalMessage.poll) {
+      forwardedMessageData.poll = {
+        question: originalMessage.poll.question,
+        options: originalMessage.poll.options.map((opt, idx) => ({
+          id: opt.id || idx + 1,
+          text: opt.text,
+          votes: []
+        })),
+        allowMultiple: originalMessage.poll.allowMultiple,
+        isAnonymous: originalMessage.poll.isAnonymous
+      };
+    }
+
+    const forwardedMessage = await Message.create(forwardedMessageData);
+
+    await forwardedMessage.populate([
+      { path: 'sender', select: 'username avatar' },
+      { path: 'attachments' }
+    ]);
+
+    await Conversation.findByIdAndUpdate(conversationId, {
+      lastMessage: forwardedMessage._id,
+      lastActivity: new Date()
+    });
+
+    const io = getIO();
+    targetConversation.participants.forEach(participant => {
+      const userId = participant.user.toString();
+      const sockets = getUserSockets(userId);
+      sockets.forEach(socketId => {
+        io.to(socketId).emit('new-message', {
+          message: forwardedMessage,
+          conversationId
+        });
+      });
+    });
+
+    res.status(201).json({
+      success: true,
+      data: forwardedMessage
+    });
+  } catch (error) {
+    console.error('Forward message error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to forward message'
+    });
+  }
+};
+
+// @desc Vote on poll
+// @route POST /api/messages/:id/poll/vote
+// @access Private
+exports.votePoll = async (req, res) => {
+  try {
+    const { optionId } = req.body;
+    const userId = req.user._id.toString();
+
+    if (optionId === undefined || optionId === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Option ID is required'
+      });
+    }
+
+    const message = await Message.findById(req.params.id);
+    
+    if (!message || message.type !== 'poll') {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Poll not found' 
+      });
+    }
+
+    const conversation = await Conversation.findOne({
+      _id: message.conversation,
+      'participants.user': req.user._id
+    });
+
+    if (!conversation) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to vote on this poll'
+      });
+    }
+
+    if (message.poll.expiresAt && new Date(message.poll.expiresAt) < new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Poll has expired'
+      });
+    }
+
+    const poll = message.poll;
+
+    // Remove previous vote if single-choice
+    if (!poll.allowMultiple) {
+      poll.options.forEach(opt => {
+        opt.votes = opt.votes.filter(id => id.toString() !== userId);
+      });
+    }
+
+    const option = poll.options.find(o => o.id === optionId);
+    
+    if (!option) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid option'
+      });
+    }
+
+    const alreadyVoted = option.votes.some(id => id.toString() === userId);
+    if (!alreadyVoted) {
+      option.votes.push(req.user._id);
+    }
+
+    await message.save();
+
+    const io = getIO();
+    conversation.participants.forEach(participant => {
+      const sockets = getUserSockets(participant.user.toString());
+      sockets.forEach(socketId => {
+        io.to(socketId).emit('poll-vote', { 
+          messageId: message._id, 
+          poll: message.poll,
+          conversationId: message.conversation
+        });
+      });
+    });
+
+    res.status(200).json({ 
+      success: true, 
+      data: message.poll 
+    });
+  } catch (error) {
+    console.error('Vote poll error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to vote on poll'
+    });
+  }
+};
+
+// @desc Remove vote from poll
+// @route DELETE /api/messages/:id/poll/vote
+// @access Private
+exports.removeVote = async (req, res) => {
+  try {
+    const userId = req.user._id.toString();
+    const message = await Message.findById(req.params.id);
+
+    if (!message || message.type !== 'poll') {
+      return res.status(404).json({
+        success: false,
+        message: 'Poll not found'
+      });
+    }
+
+    const conversation = await Conversation.findOne({
+      _id: message.conversation,
+      'participants.user': req.user._id
+    });
+
+    if (!conversation) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized'
+      });
+    }
+
+    message.poll.options.forEach(option => {
+      option.votes = option.votes.filter(id => id.toString() !== userId);
+    });
+
+    await message.save();
+
+    const io = getIO();
+    conversation.participants.forEach(participant => {
+      const sockets = getUserSockets(participant.user.toString());
+      sockets.forEach(socketId => {
+        io.to(socketId).emit('poll-vote', {
+          messageId: message._id,
+          poll: message.poll,
+          conversationId: message.conversation
+        });
+      });
+    });
+
+    res.status(200).json({
+      success: true,
+      data: message.poll
+    });
+  } catch (error) {
+    console.error('Remove vote error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to remove vote'
+    });
+  }
+};
+
+// @desc Edit message
+// @route PUT /api/messages/:id
+// @access Private
 exports.editMessage = async (req, res) => {
   try {
     const { content } = req.body;
@@ -184,9 +535,9 @@ exports.editMessage = async (req, res) => {
   }
 };
 
-// @desc    Delete message
-// @route   DELETE /api/messages/:id
-// @access  Private
+// @desc Delete message
+// @route DELETE /api/messages/:id
+// @access Private
 exports.deleteMessage = async (req, res) => {
   try {
     const message = await Message.findOne({
@@ -231,9 +582,9 @@ exports.deleteMessage = async (req, res) => {
   }
 };
 
-// @desc    Add reaction to message
-// @route   POST /api/messages/:id/reactions
-// @access  Private
+// @desc Add reaction to message
+// @route POST /api/messages/:id/reactions
+// @access Private
 exports.addReaction = async (req, res) => {
   try {
     const { emoji } = req.body;
@@ -247,7 +598,6 @@ exports.addReaction = async (req, res) => {
       });
     }
 
-    // Check if user is participant
     const conversation = await Conversation.findOne({
       _id: message.conversation,
       'participants.user': req.user._id
@@ -260,12 +610,10 @@ exports.addReaction = async (req, res) => {
       });
     }
 
-    // Remove existing reaction from this user
     message.reactions = message.reactions.filter(
       r => r.user.toString() !== req.user._id.toString()
     );
 
-    // Add new reaction
     message.reactions.push({
       emoji,
       user: req.user._id
@@ -274,7 +622,6 @@ exports.addReaction = async (req, res) => {
     await message.save();
     await message.populate('reactions.user', 'username avatar');
 
-    // Emit to participants
     const io = getIO();
     conversation.participants.forEach(participant => {
       const sockets = getUserSockets(participant.user.toString());
@@ -300,9 +647,9 @@ exports.addReaction = async (req, res) => {
   }
 };
 
-// @desc    Remove reaction from message
-// @route   DELETE /api/messages/:id/reactions
-// @access  Private
+// @desc Remove reaction from message
+// @route DELETE /api/messages/:id/reactions
+// @access Private
 exports.removeReaction = async (req, res) => {
   try {
     const message = await Message.findById(req.params.id);
@@ -347,9 +694,9 @@ exports.removeReaction = async (req, res) => {
   }
 };
 
-// @desc    Search messages
-// @route   GET /api/messages/search
-// @access  Private
+// @desc Search messages
+// @route GET /api/messages/search
+// @access Private
 exports.searchMessages = async (req, res) => {
   try {
     const { q, conversationId, page = 1, limit = 20 } = req.query;
@@ -367,7 +714,6 @@ exports.searchMessages = async (req, res) => {
     };
 
     if (conversationId) {
-      // Verify user is participant
       const conversation = await Conversation.findOne({
         _id: conversationId,
         'participants.user': req.user._id
@@ -382,7 +728,6 @@ exports.searchMessages = async (req, res) => {
 
       query.conversation = conversationId;
     } else {
-      // Get all user's conversations
       const conversations = await Conversation.find({
         'participants.user': req.user._id
       }).select('_id');
@@ -418,9 +763,9 @@ exports.searchMessages = async (req, res) => {
   }
 };
 
-// @desc    Mark message as read
-// @route   PUT /api/messages/:id/read
-// @access  Private
+// @desc Mark message as read
+// @route PUT /api/messages/:id/read
+// @access Private
 exports.markAsRead = async (req, res) => {
   try {
     const message = await Message.findById(req.params.id);
@@ -432,7 +777,6 @@ exports.markAsRead = async (req, res) => {
       });
     }
 
-    // Check if already read
     const alreadyRead = message.readBy.some(
       r => r.user.toString() === req.user._id.toString()
     );
@@ -444,7 +788,6 @@ exports.markAsRead = async (req, res) => {
       });
       await message.save();
 
-      // Emit read receipt
       const io = getIO();
       const senderSockets = getUserSockets(message.sender.toString());
       senderSockets.forEach(socketId => {

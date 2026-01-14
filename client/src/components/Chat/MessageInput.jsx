@@ -1,46 +1,64 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useChat } from '@context/ChatContext';
 import { uploadAPI } from '@services/api';
+
 import { Button } from '@components/ui/button';
 import { Textarea } from '@components/ui/textarea';
+
 import { 
   Send, 
-  Paperclip, 
   Smile, 
   X, 
-  Image, 
   FileText, 
   Loader2,
-  Mic,
-  Camera
+  Mic
 } from 'lucide-react';
+
 import EmojiPicker from '@components/Shared/EmojiPicker';
 import VoiceRecorder from './VoiceRecorder';
 import ReplyPreview from './ReplyPreview';
+import CreatePollDialog from './CreatePollDialog';
+import AttachmentMenu from './AttachmentMenu';
+
 
 const MessageInput = ({ replyTo, onCancelReply }) => {
+
   const { sendMessage, startTyping, stopTyping, activeConversation } = useChat();
+
   const [content, setContent] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
+
+  const [showPollDialog, setShowPollDialog] = useState(false);
+
   const [attachments, setAttachments] = useState([]);
   const [uploading, setUploading] = useState(false);
-  
+
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const mediaInputRef = useRef(null);
+  const audioInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
 
-  // Auto-resize textarea
+
+  // -----------------------------
+  // AUTO-RESIZE TEXTAREA
+  // -----------------------------
   useEffect(() => {
     const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
-    }
+    if (!textarea) return;
+
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+
   }, [content]);
 
-  // Handle typing indicator
+
+  // -----------------------------
+  // TYPING INDICATOR
+  // -----------------------------
   useEffect(() => {
     if (content && !isTyping) {
       setIsTyping(true);
@@ -58,140 +76,190 @@ const MessageInput = ({ replyTo, onCancelReply }) => {
       }
     }, 2000);
 
-    return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-    };
+    return () => typingTimeoutRef.current && clearTimeout(typingTimeoutRef.current);
+
   }, [content, isTyping, startTyping, stopTyping]);
 
-  // Reset when conversation changes
+
+  // -----------------------------
+  // RESET ON CONVERSATION SWITCH
+  // -----------------------------
   useEffect(() => {
     setContent('');
     setAttachments([]);
     setIsTyping(false);
     setShowEmojiPicker(false);
     setShowVoiceRecorder(false);
+    setShowPollDialog(false);
     onCancelReply?.();
   }, [activeConversation?._id]);
 
-  // Focus input when reply is set
-  useEffect(() => {
-    if (replyTo) {
-      textareaRef.current?.focus();
-    }
-  }, [replyTo]);
 
+  // -----------------------------
+  // FILE ATTACHMENT HANDLING
+  // -----------------------------
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
+    if (!files.length) return;
 
     const maxSize = 10 * 1024 * 1024;
-    const validFiles = files.filter(file => {
+
+    const valid = files.filter(file => {
       if (file.size > maxSize) {
-        alert(`${file.name} is too large. Maximum size is 10MB.`);
+        alert(`${file.name} is too large (max 10MB).`);
         return false;
       }
       return true;
     });
 
-    const newAttachments = validFiles.map(file => ({
+    const mapped = valid.map(file => ({
       file,
-      preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+      preview: file.type.startsWith('image/')
+        ? URL.createObjectURL(file)
+        : null,
       name: file.name,
       size: file.size,
       type: file.type
     }));
 
-    setAttachments(prev => [...prev, ...newAttachments]);
-    
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    setAttachments(prev => [...prev, ...mapped]);
+
+    // Reset all file inputs
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (mediaInputRef.current) mediaInputRef.current.value = '';
+    if (audioInputRef.current) audioInputRef.current.value = '';
   };
+
 
   const removeAttachment = (index) => {
     setAttachments(prev => {
-      const newAttachments = [...prev];
-      if (newAttachments[index].preview) {
-        URL.revokeObjectURL(newAttachments[index].preview);
-      }
-      newAttachments.splice(index, 1);
-      return newAttachments;
+      const copy = [...prev];
+      if (copy[index].preview) URL.revokeObjectURL(copy[index].preview);
+      copy.splice(index, 1);
+      return copy;
     });
   };
 
+
   const uploadAttachments = async () => {
-    if (attachments.length === 0) return [];
+    if (!attachments.length) return [];
 
     setUploading(true);
-    try {
-      const formData = new FormData();
-      attachments.forEach(attachment => {
-        formData.append('files', attachment.file);
-      });
 
-      const response = await uploadAPI.uploadFiles(formData);
-      return response.data.success ? response.data.data : [];
+    try {
+      const form = new FormData();
+      attachments.forEach(a => form.append('files', a.file));
+
+      const res = await uploadAPI.uploadFiles(form);
+      return res.data.success ? res.data.data : [];
+
     } catch (err) {
       console.error('Upload error:', err);
       return [];
+
     } finally {
       setUploading(false);
     }
   };
 
+
+  // -----------------------------
+  // VOICE MESSAGE SEND
+  // -----------------------------
   const handleVoiceSend = async (audioFile, duration) => {
     try {
       setUploading(true);
-      
-      const formData = new FormData();
-      formData.append('files', audioFile);
-      
-      const response = await uploadAPI.uploadFiles(formData);
-      
-      if (response.data.success) {
-        const attachment = response.data.data[0];
-        await sendMessage('🎤 Voice message', 'audio', [{
-          ...attachment,
-          duration
-        }], replyTo?._id);
-        
+
+      const form = new FormData();
+      form.append('files', audioFile);
+
+      const res = await uploadAPI.uploadFiles(form);
+
+      if (res.data.success) {
+        const att = res.data.data[0];
+
+        await sendMessage(
+          '🎤 Voice message',
+          'audio',
+          [{ ...att, duration }],
+          replyTo?._id
+        );
+
         onCancelReply?.();
       }
+
     } catch (err) {
       console.error('Voice send error:', err);
+
     } finally {
       setUploading(false);
       setShowVoiceRecorder(false);
     }
   };
 
-  const handleSubmit = async (e) => {
-    e?.preventDefault();
-    
-    const hasContent = content.trim();
-    const hasAttachments = attachments.length > 0;
 
-    if (!hasContent && !hasAttachments) return;
+  // -----------------------------
+  // POLL SUBMIT
+  // -----------------------------
+  const handlePollSubmit = async (pollData) => {
+    if (!activeConversation?._id) {
+      console.error('No active conversation');
+      return;
+    }
 
     try {
-      let uploadedFiles = [];
-      
-      if (hasAttachments) {
-        uploadedFiles = await uploadAttachments();
+      const messagePayload = {
+        conversationId: activeConversation._id,
+        type: 'poll',
+        content: pollData.question,
+        poll: {
+          question: pollData.question,
+          options: pollData.options.map((opt, idx) => ({
+            id: opt.id || idx + 1,
+            text: opt.text
+          })),
+          allowMultiple: pollData.allowMultiple || false,
+          isAnonymous: pollData.isAnonymous || false
+        }
+      };
+
+      await sendMessage(messagePayload);
+      setShowPollDialog(false);
+
+    } catch (error) {
+      console.error('Send poll error:', error);
+      throw error;
+    }
+  };
+
+
+  // -----------------------------
+  // NORMAL MESSAGE SEND
+  // -----------------------------
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+
+    const hasText = content.trim();
+    const hasFiles = attachments.length > 0;
+
+    if (!hasText && !hasFiles) return;
+
+    try {
+      let uploaded = [];
+
+      if (hasFiles) uploaded = await uploadAttachments();
+
+      let type = 'text';
+
+      if (uploaded.length) {
+        const f = uploaded[0];
+        if (f.mimeType?.startsWith('image/')) type = 'image';
+        else if (f.mimeType?.startsWith('video/')) type = 'video';
+        else if (f.mimeType?.startsWith('audio/')) type = 'audio';
+        else type = 'file';
       }
 
-      let messageType = 'text';
-      if (uploadedFiles.length > 0) {
-        const firstFile = uploadedFiles[0];
-        if (firstFile.mimeType?.startsWith('image/')) messageType = 'image';
-        else if (firstFile.mimeType?.startsWith('video/')) messageType = 'video';
-        else if (firstFile.mimeType?.startsWith('audio/')) messageType = 'audio';
-        else messageType = 'file';
-      }
-
-      const attachmentsData = uploadedFiles.map(f => ({
+      const attData = uploaded.map(f => ({
         filename: f.filename,
         originalName: f.originalName || f.name,
         mimeType: f.mimeType || f.type,
@@ -200,10 +268,10 @@ const MessageInput = ({ replyTo, onCancelReply }) => {
       }));
 
       await sendMessage(
-        hasContent ? content.trim() : '',
-        messageType,
-        attachmentsData.length > 0 ? attachmentsData : null,
-        replyTo?._id
+        hasText ? content.trim() : '',
+        type,
+        attData.length ? attData : null,
+        replyTo?._id || null
       );
 
       setContent('');
@@ -218,6 +286,7 @@ const MessageInput = ({ replyTo, onCancelReply }) => {
     }
   };
 
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -225,30 +294,79 @@ const MessageInput = ({ replyTo, onCancelReply }) => {
     }
   };
 
+
   const handleEmojiSelect = (emoji) => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const newContent = content.substring(0, start) + emoji + content.substring(end);
-      setContent(newContent);
-      
-      setTimeout(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + emoji.length;
-        textarea.focus();
-      }, 0);
-    } else {
+    const ta = textareaRef.current;
+
+    if (!ta) {
       setContent(prev => prev + emoji);
+      return;
     }
+
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+
+    const updated =
+      content.substring(0, start) +
+      emoji +
+      content.substring(end);
+
+    setContent(updated);
+
+    setTimeout(() => {
+      ta.selectionStart = ta.selectionEnd = start + emoji.length;
+      ta.focus();
+    }, 0);
+
     setShowEmojiPicker(false);
   };
 
-  const formatSize = (bytes) => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+
+  const formatSize = (b) =>
+    b < 1024 ? `${b} B`
+      : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB`
+      : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+
+
+  // -----------------------------
+  // ATTACHMENT MENU HANDLERS
+  // -----------------------------
+  const handleDocumentClick = () => {
+    fileInputRef.current?.click();
   };
 
+  const handleMediaClick = () => {
+    mediaInputRef.current?.click();
+  };
+
+  const handleAudioClick = () => {
+    audioInputRef.current?.click();
+  };
+
+  const handleCameraClick = () => {
+    // Future: Implement webcam capture
+    alert('Camera capture coming soon! For now, please use the Photos & Videos option.');
+  };
+
+  const handleContactClick = () => {
+    // Future: Implement contact sharing
+    alert('Contact sharing coming soon!');
+  };
+
+  const handleEventClick = () => {
+    // Future: Implement event creation
+    alert('Event creation coming soon!');
+  };
+
+  const handleStickerClick = () => {
+    // Future: Implement sticker picker
+    alert('Sticker picker coming soon!');
+  };
+
+
+  // -----------------------------
+  // VOICE RECORDER VIEW
+  // -----------------------------
   if (showVoiceRecorder) {
     return (
       <div className="border-t bg-background p-4">
@@ -260,41 +378,39 @@ const MessageInput = ({ replyTo, onCancelReply }) => {
     );
   }
 
+
+  // -----------------------------
+  // MAIN INPUT UI
+  // -----------------------------
   return (
     <div className="border-t bg-background">
-      {/* Reply Preview */}
+
       {replyTo && (
         <ReplyPreview message={replyTo} onCancel={onCancelReply} />
       )}
 
-      {/* Attachments Preview */}
+      {/* ATTACHMENT PREVIEWS */}
       {attachments.length > 0 && (
         <div className="px-4 pt-3 pb-2">
           <div className="flex flex-wrap gap-2">
-            {attachments.map((attachment, index) => (
-              <div
-                key={index}
-                className="relative group"
-              >
-                {attachment.preview ? (
-                  <div className="relative w-20 h-20 rounded-lg overflow-hidden bg-muted">
-                    <img
-                      src={attachment.preview}
-                      alt={attachment.name}
-                      className="w-full h-full object-cover"
-                    />
+            {attachments.map((att, i) => (
+              <div key={i} className="relative group">
+                {att.preview ? (
+                  <div className="w-20 h-20 rounded-lg overflow-hidden bg-muted">
+                    <img src={att.preview} alt={att.name} className="w-full h-full object-cover" />
                   </div>
                 ) : (
                   <div className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg">
                     <FileText className="h-4 w-4 text-muted-foreground" />
                     <div className="max-w-[120px]">
-                      <p className="text-xs font-medium truncate">{attachment.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{formatSize(attachment.size)}</p>
+                      <p className="text-xs font-medium truncate">{att.name}</p>
+                      <p className="text-[10px] text-muted-foreground">{formatSize(att.size)}</p>
                     </div>
                   </div>
                 )}
+
                 <button
-                  onClick={() => removeAttachment(index)}
+                  onClick={() => removeAttachment(i)}
                   className="absolute -top-1.5 -right-1.5 p-1 bg-destructive text-destructive-foreground rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                   <X className="h-3 w-3" />
@@ -305,32 +421,51 @@ const MessageInput = ({ replyTo, onCancelReply }) => {
         </div>
       )}
 
-      {/* Input Area */}
+      {/* HIDDEN FILE INPUTS */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        accept=".pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.csv"
+        onChange={handleFileSelect}
+      />
+      <input
+        ref={mediaInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        accept="image/*,video/*"
+        onChange={handleFileSelect}
+      />
+      <input
+        ref={audioInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        accept="audio/*"
+        onChange={handleFileSelect}
+      />
+
+      {/* MAIN INPUT FORM */}
       <form onSubmit={handleSubmit} className="p-3">
         <div className="flex items-end gap-2">
-          {/* Attachment button */}
-          <div className="flex-shrink-0">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.zip,.rar"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            <Button 
-              type="button" 
-              variant="ghost" 
-              size="icon"
-              className="h-10 w-10 rounded-full"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-            >
-              <Paperclip className="h-5 w-5" />
-            </Button>
-          </div>
 
-          {/* Text input container */}
+          {/* ATTACHMENT MENU */}
+          <AttachmentMenu
+            onDocument={handleDocumentClick}
+            onMedia={handleMediaClick}
+            onCamera={handleCameraClick}
+            onAudio={handleAudioClick}
+            onContact={handleContactClick}
+            onPoll={() => setShowPollDialog(true)}
+            onEvent={handleEventClick}
+            onSticker={handleStickerClick}
+            disabled={uploading}
+            showPollOption={activeConversation?.type === 'group'}
+          />
+
+          {/* TEXT INPUT */}
           <div className="flex-1 relative bg-muted rounded-2xl">
             <Textarea
               ref={textareaRef}
@@ -338,40 +473,39 @@ const MessageInput = ({ replyTo, onCancelReply }) => {
               onChange={(e) => setContent(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Type a message..."
-              className="min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent pr-12 py-3 focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent pr-12 py-3"
               rows={1}
               disabled={uploading}
             />
-            
-            {/* Emoji button */}
+
             <div className="absolute right-2 bottom-2">
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 rounded-full"
+                className="h-8 w-8"
                 onClick={() => setShowEmojiPicker(!showEmojiPicker)}
               >
-                <Smile className="h-5 w-5 text-muted-foreground" />
+                <Smile className="h-5 w-5" />
               </Button>
 
               {showEmojiPicker && (
                 <div className="absolute bottom-full right-0 mb-2 z-50">
                   <EmojiPicker 
-                    onSelect={handleEmojiSelect} 
-                    onClose={() => setShowEmojiPicker(false)} 
+                    onSelect={handleEmojiSelect}
+                    onClose={() => setShowEmojiPicker(false)}
                   />
                 </div>
               )}
             </div>
           </div>
 
-          {/* Send / Voice button */}
-          {content.trim() || attachments.length > 0 ? (
+          {/* SEND / VOICE BUTTON */}
+          {content.trim() || attachments.length ? (
             <Button 
               type="submit" 
-              size="icon"
-              className="h-10 w-10 rounded-full flex-shrink-0"
+              size="icon" 
+              className="h-10 w-10 rounded-full" 
               disabled={uploading}
             >
               {uploading ? (
@@ -381,18 +515,28 @@ const MessageInput = ({ replyTo, onCancelReply }) => {
               )}
             </Button>
           ) : (
-            <Button 
-              type="button" 
-              size="icon"
+            <Button
+              type="button"
               variant="ghost"
-              className="h-10 w-10 rounded-full flex-shrink-0"
+              size="icon"
+              className="h-10 w-10 rounded-full"
               onClick={() => setShowVoiceRecorder(true)}
             >
               <Mic className="h-5 w-5" />
             </Button>
           )}
+
         </div>
       </form>
+
+      {/* POLL DIALOG */}
+      <CreatePollDialog
+        open={showPollDialog}
+        onOpenChange={setShowPollDialog}
+        onSubmit={handlePollSubmit}
+        conversationId={activeConversation?._id}
+      />
+
     </div>
   );
 };

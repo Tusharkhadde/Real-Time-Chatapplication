@@ -5,7 +5,7 @@ import { useAuth } from '@context/AuthContext';
 import Sidebar from '@components/Sidebar/Sidebar';
 import ChatWindow from '@components/Chat/ChatWindow';
 import EmptyState from '@components/Chat/EmptyState';
-import ChatbotButton from '@components/Chat/ChatbotButton';
+//import ChatbotButton from '@components/Chat/ChatbotButton';
 import { useMediaQuery } from '@hooks/useMediaQuery';
 
 const Chat = () => {
@@ -103,7 +103,7 @@ const Chat = () => {
       </main>
 
       {/* Chatbot Button */}
-      <ChatbotButton />
+      {/* <ChatbotButton /> */}
     </div>
   );
 };

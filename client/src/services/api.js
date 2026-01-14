@@ -117,6 +117,8 @@ export const messageAPI = {
   deleteMessage: (id) => api.delete(`/messages/${id}`),
   addReaction: (id, emoji) => api.post(`/messages/${id}/reactions`, { emoji }),
   removeReaction: (id) => api.delete(`/messages/${id}/reactions`),
+  votePoll: (id, optionId) => api.post(`/messages/${id}/poll/vote`, { optionId }),
+  removeVote: (id) => api.delete(`/messages/${id}/poll/vote`),
   searchMessages: (params) => api.get('/messages/search', { params })
 };
 
@@ -136,6 +138,10 @@ export const chatbotAPI = {
   sendMessage: (message) => api.post('/chatbot/message', { message }),
   getHistory: () => api.get('/chatbot/history'),
   clearHistory: () => api.delete('/chatbot/history')
+};
+export const pollAPI = {
+  vote: (id, optionId) =>
+    api.post(`/messages/${id}/poll/vote`, { optionId })
 };
 
 export default api;
