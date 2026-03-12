@@ -1,11 +1,11 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '@context/AuthContext';
 import { Button } from '@components/ui/button';
-import { 
-  MessageCircle, 
-  Users, 
-  Shield, 
-  Zap, 
+import {
+  MessageCircle,
+  Users,
+  Shield,
+  Zap,
   ArrowRight,
   Github,
   Twitter,
@@ -13,6 +13,7 @@ import {
   CheckCircle,
   Sparkles
 } from 'lucide-react';
+import DigitalRain from '@components/DigitalRain';
 
 const Home = () => {
   const { isAuthenticated } = useAuth();
@@ -50,7 +51,8 @@ const Home = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background via-background to-muted/30">
+    <div className="min-h-screen text-white dark">
+      <DigitalRain />
       {/* Navigation */}
       <nav className="sticky top-0 z-50 glass border-b">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
@@ -104,7 +106,7 @@ const Home = () => {
           </h1>
 
           <p className="text-lg md:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto">
-            Experience seamless real-time messaging with a modern, beautiful interface. 
+            Experience seamless real-time messaging with a modern, beautiful interface.
             Stay connected with friends, family, and colleagues.
           </p>
 
@@ -166,7 +168,7 @@ const Home = () => {
           {features.map((feature, index) => (
             <div
               key={index}
-              className="group p-6 bg-card rounded-2xl border hover:border-primary/50 hover:shadow-lg transition-all duration-300"
+              className="group p-6 glass rounded-2xl border border-white/10 hover:border-primary/50 hover:shadow-lg transition-all duration-300"
             >
               <div className="p-3 bg-primary/10 rounded-xl w-fit mb-4 text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
                 {feature.icon}
@@ -182,17 +184,17 @@ const Home = () => {
 
       {/* Highlights Section */}
       <section className="container mx-auto px-4 py-20">
-        <div className="bg-gradient-to-br from-primary/10 via-purple-500/10 to-pink-500/10 rounded-3xl p-8 md:p-16">
+        <div className="bg-gradient-to-br from-primary/20 via-purple-500/20 to-pink-500/20 backdrop-blur-md rounded-3xl p-8 md:p-16 border border-white/10">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             <div>
               <h2 className="text-3xl md:text-4xl font-bold mb-6">
                 Powerful features for modern communication
               </h2>
               <p className="text-muted-foreground mb-8">
-                From voice messages to AI assistance, ChatApp has everything you need 
+                From voice messages to AI assistance, ChatApp has everything you need
                 for effective and enjoyable conversations.
               </p>
-              
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {highlights.map((item, index) => (
                   <div key={index} className="flex items-center gap-2">
@@ -205,7 +207,7 @@ const Home = () => {
 
             <div className="relative">
               {/* Mock phone/chat preview */}
-              <div className="bg-background rounded-3xl border shadow-2xl p-4 max-w-sm mx-auto">
+              <div className="glass rounded-3xl border border-white/10 shadow-2xl p-4 max-w-sm mx-auto backdrop-blur-xl">
                 <div className="flex items-center gap-3 pb-4 border-b">
                   <div className="w-10 h-10 bg-primary/20 rounded-full" />
                   <div>
@@ -247,7 +249,7 @@ const Home = () => {
             Ready to get started?
           </h2>
           <p className="text-muted-foreground mb-8">
-            Join thousands of users who are already enjoying ChatApp. 
+            Join thousands of users who are already enjoying ChatApp.
             It's free to sign up and takes less than a minute.
           </p>
           <Button size="lg" asChild>
@@ -283,23 +285,23 @@ const Home = () => {
             </div>
 
             <div className="flex items-center gap-4">
-              <a 
-                href="https://github.com" 
-                target="_blank" 
+              <a
+                href="https://github.com/Tusharkhadde"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Github className="h-5 w-5" />
               </a>
-              <a 
-                href="https://twitter.com" 
-                target="_blank" 
+              <a
+                href="https://x.com/KhaddeTush67731"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Twitter className="h-5 w-5" />
               </a>
-              <a 
+              <a
                 href="mailto:hello@chatapp.com"
                 className="text-muted-foreground hover:text-foreground transition-colors"
               >
