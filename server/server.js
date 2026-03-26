@@ -27,9 +27,25 @@ const avatarsDir = path.join(uploadsDir, 'avatars');
 });
 
 // ==================== SOCKET.IO ====================
+const allowedOrigins = [
+  CLIENT_URL,
+  'https://real-time-chatapplication-fipe.vercel.app',
+  'https://real-time-chatapplication-fcpr.vercel.app',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173'
+];
+
 const io = new Server(server, {
   cors: {
-    origin: [CLIENT_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or curl)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ['GET', 'POST'],
     credentials: true
   },
@@ -39,7 +55,15 @@ const io = new Server(server, {
 
 // ==================== MIDDLEWARE ====================
 app.use(cors({
-  origin: [CLIENT_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
